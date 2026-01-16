@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useRef, useState } from "react";
+import React, { Suspense, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
 const REGIONS: Record<string, string> = {
@@ -72,7 +72,6 @@ type FileUploadButtonProps = {
 
 function FileUploadButton({ label, hint, file, onPick, inputRef, accept, maxMb = 10 }: FileUploadButtonProps) {
   const [drag, setDrag] = useState(false);
-
   const open = () => inputRef.current?.click();
 
   const pickFirst = (files: FileList | null | undefined) => {
@@ -99,11 +98,7 @@ function FileUploadButton({ label, hint, file, onPick, inputRef, accept, maxMb =
           {label}
           <span style={{ color: "#ff5a5a" }}> *</span>
         </div>
-        {hint && (
-          <div style={{ fontSize: "13px", color: "rgba(43, 63, 99, 0.65)", lineHeight: 1.25 }}>
-            {hint}
-          </div>
-        )}
+        {hint && <div style={{ fontSize: "13px", color: "rgba(43, 63, 99, 0.65)", lineHeight: 1.25 }}>{hint}</div>}
       </div>
 
       <div style={{ position: "relative" }}>
@@ -117,11 +112,7 @@ function FileUploadButton({ label, hint, file, onPick, inputRef, accept, maxMb =
             padding: "12px 24px",
             borderRadius: "12px",
             border: drag ? "2px solid #4a7dff" : file ? "2px solid #00a86b" : "2px solid #4a7dff",
-            background: drag
-              ? "rgba(74, 125, 255, 0.1)"
-              : file
-                ? "rgba(0, 168, 107, 0.1)"
-                : "rgba(255, 255, 255, 0.9)",
+            background: drag ? "rgba(74, 125, 255, 0.1)" : file ? "rgba(0, 168, 107, 0.1)" : "rgba(255, 255, 255, 0.9)",
             color: file ? "#006b40" : "#2b3f63",
             fontSize: "16px",
             fontWeight: "700",
@@ -166,13 +157,7 @@ function FileUploadButton({ label, hint, file, onPick, inputRef, accept, maxMb =
           <span style={{ fontWeight: "700", whiteSpace: "nowrap" }}>{file ? "Изменить файл" : "Выбрать файл"}</span>
         </button>
 
-        <input
-          ref={inputRef as any}
-          style={{ display: "none" }}
-          type="file"
-          accept={accept}
-          onChange={(e) => pickFirst(e.target.files)}
-        />
+        <input ref={inputRef as any} style={{ display: "none" }} type="file" accept={accept} onChange={(e) => pickFirst(e.target.files)} />
 
         {file && (
           <div
@@ -216,9 +201,7 @@ function FileUploadButton({ label, hint, file, onPick, inputRef, accept, maxMb =
               >
                 {file.name}
               </div>
-              <div style={{ fontSize: "12px", color: "rgba(43, 63, 99, 0.65)", marginTop: "2px" }}>
-                {formatSize(file.size)}
-              </div>
+              <div style={{ fontSize: "12px", color: "rgba(43, 63, 99, 0.65)", marginTop: "2px" }}>{formatSize(file.size)}</div>
             </div>
             <div
               style={{
@@ -247,11 +230,12 @@ function FileUploadButton({ label, hint, file, onPick, inputRef, accept, maxMb =
   );
 }
 
-export default function Page() {
+function UploadInner() {
   const sp = useSearchParams();
 
   const regKey = useMemo(() => (sp.get("reg") || "bel").trim(), [sp]);
   const regionName = REGIONS[regKey] || REGIONS["bel"];
+  const key = useMemo(() => (sp.get("key") || "").trim(), [sp]);
 
   const [studentName, setStudentName] = useState("");
   const [receipt, setReceipt] = useState<File | null>(null);
@@ -259,9 +243,6 @@ export default function Page() {
 
   const [isSending, setIsSending] = useState(false);
   const [msg, setMsg] = useState("");
-
-  // ВАЖНО: ключ берём из ссылки, чтобы /api/upload мог его проверить
-  const key = useMemo(() => (sp.get("key") || "").trim(), [sp]);
 
   const receiptRef = useRef<HTMLInputElement | null>(null);
   const docRef = useRef<HTMLInputElement | null>(null);
@@ -365,14 +346,7 @@ export default function Page() {
             Отправка документов
           </h1>
 
-          <div
-            style={{
-              textAlign: "center",
-              fontSize: "13px",
-              color: "rgba(43, 63, 99, 0.85)",
-              marginBottom: "10px",
-            }}
-          >
+          <div style={{ textAlign: "center", fontSize: "13px", color: "rgba(43, 63, 99, 0.85)", marginBottom: "10px" }}>
             Регион: <b>{regionName}</b> <span style={{ color: "rgba(43, 63, 99, 0.55)" }}>({regKey})</span>
           </div>
 
@@ -421,7 +395,7 @@ export default function Page() {
 
             <FileUploadButton
               label="Документы (Свидетельство о рождении / Паспорт РФ / Загранпаспорт):"
-              hint="Тоже JPG/PNG/PDF. Желательно один файл (если 2 стороны — объедините в PDF)."
+              hint="Тоже JPG/PNG/PDF. Желательно один файл."
               file={docFile}
               onPick={setDocFile}
               inputRef={docRef}
@@ -485,9 +459,7 @@ export default function Page() {
                   fontSize: "14px",
                   textAlign: "center",
                   background: msg.includes("✅") ? "rgba(235, 255, 242, 0.9)" : "rgba(255, 236, 236, 0.9)",
-                  border: msg.includes("✅")
-                    ? "2px solid rgba(60, 180, 110, 0.3)"
-                    : "2px solid rgba(220, 90, 90, 0.3)",
+                  border: msg.includes("✅") ? "2px solid rgba(60, 180, 110, 0.3)" : "2px solid rgba(220, 90, 90, 0.3)",
                   color: msg.includes("✅") ? "#166534" : "#991b1b",
                 }}
               >
@@ -516,5 +488,13 @@ export default function Page() {
         </section>
       </main>
     </>
+  );
+}
+
+export default function Page() {
+  return (
+    <Suspense fallback={null}>
+      <UploadInner />
+    </Suspense>
   );
 }
