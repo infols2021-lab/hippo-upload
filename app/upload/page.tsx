@@ -70,7 +70,7 @@ type FileUploadButtonProps = {
   maxMb?: number;
 };
 
-function FileUploadButton({ label, hint, file, onPick, inputRef, accept, maxMb = 10 }: FileUploadButtonProps) {
+function FileUploadButton({ label, hint, file, onPick, inputRef, accept, maxMb = 5 }: FileUploadButtonProps) {
   const [drag, setDrag] = useState(false);
   const open = () => inputRef.current?.click();
 
@@ -189,32 +189,12 @@ function FileUploadButton({ label, hint, file, onPick, inputRef, accept, maxMb =
               <FileIcon />
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div
-                style={{
-                  fontSize: "14px",
-                  fontWeight: "600",
-                  color: "#2b3f63",
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                }}
-              >
+              <div style={{ fontSize: "14px", fontWeight: "600", color: "#2b3f63", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                 {file.name}
               </div>
               <div style={{ fontSize: "12px", color: "rgba(43, 63, 99, 0.65)", marginTop: "2px" }}>{formatSize(file.size)}</div>
             </div>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                width: "28px",
-                height: "28px",
-                background: "rgba(0, 168, 107, 0.15)",
-                borderRadius: "50%",
-                color: "#006b40",
-              }}
-            >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "28px", height: "28px", background: "rgba(0, 168, 107, 0.15)", borderRadius: "50%", color: "#006b40" }}>
               <CheckIcon />
             </div>
           </div>
@@ -236,7 +216,6 @@ function UploadInner() {
   const regKey = useMemo(() => (sp.get("reg") || "bel").trim(), [sp]);
   const regionName = REGIONS[regKey] || REGIONS["bel"];
 
-
   const [studentName, setStudentName] = useState("");
   const [receipt, setReceipt] = useState<File | null>(null);
   const [docFile, setDocFile] = useState<File | null>(null);
@@ -251,7 +230,6 @@ function UploadInner() {
     e.preventDefault();
     setMsg("");
 
-
     if (!studentName.trim()) return setMsg("❌ Введите ФИО.");
     if (!receipt) return setMsg("❌ Прикрепите сканы оплаты.");
     if (!docFile) return setMsg("❌ Прикрепите документ.");
@@ -262,7 +240,6 @@ function UploadInner() {
 
       const fd = new FormData();
       fd.append("reg", regKey);
-
       fd.append("studentName", studentName.trim());
       fd.append("receipt", receipt);
       fd.append("document", docFile);
@@ -271,7 +248,12 @@ function UploadInner() {
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok || !data?.ok) {
-        setMsg(`❌ Ошибка: ${data?.message || "не удалось загрузить"}`);
+        // 413 иногда возвращается без JSON — поэтому сообщаем по-человечески
+        if (res.status === 413) {
+          setMsg("❌ Слишком большой размер файлов. Уменьшите файлы (до 5 MB каждый) и попробуйте снова.");
+        } else {
+          setMsg(`❌ Ошибка: ${data?.message || "не удалось загрузить"}`);
+        }
         return;
       }
 
@@ -333,16 +315,7 @@ function UploadInner() {
             backdropFilter: "blur(10px)",
           }}
         >
-          <h1
-            style={{
-              textAlign: "center",
-              margin: "6px 0 8px 0",
-              fontSize: "34px",
-              fontWeight: "800",
-              color: "#2b3f63",
-              letterSpacing: "-0.3px",
-            }}
-          >
+          <h1 style={{ textAlign: "center", margin: "6px 0 8px 0", fontSize: "34px", fontWeight: "800", color: "#2b3f63", letterSpacing: "-0.3px" }}>
             Отправка документов
           </h1>
 
@@ -385,22 +358,22 @@ function UploadInner() {
 
             <FileUploadButton
               label="Сканы оплаты:"
-              hint="Прикрепите чек/квитанцию (JPG/PNG/PDF)."
+              hint="JPG/PNG/PDF до 5 MB."
               file={receipt}
               onPick={setReceipt}
               inputRef={receiptRef}
               accept=".jpg,.jpeg,.png,.pdf"
-              maxMb={10}
+              maxMb={5}
             />
 
             <FileUploadButton
               label="Документы (Свидетельство о рождении / Паспорт РФ / Загранпаспорт):"
-              hint="Тоже JPG/PNG/PDF. Желательно один файл."
+              hint="JPG/PNG/PDF до 5 MB."
               file={docFile}
               onPick={setDocFile}
               inputRef={docRef}
               accept=".jpg,.jpeg,.png,.pdf"
-              maxMb={10}
+              maxMb={5}
             />
 
             <button
@@ -466,11 +439,6 @@ function UploadInner() {
                 {msg}
               </div>
             )}
-
-        
-            
-            
-            
           </form>
         </section>
       </main>
