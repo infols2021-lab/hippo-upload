@@ -15,23 +15,23 @@ async function fileToBase64(file: File) {
 export async function POST(request: Request) {
   try {
     const GAS_WEBAPP_URL = process.env.GAS_WEBAPP_URL;
-    const UPLOAD_KEY = String(process.env.UPLOAD_KEY || "").trim();
+
 
     if (!GAS_WEBAPP_URL) return bad("Не задан GAS_WEBAPP_URL в переменных окружения");
-    if (!UPLOAD_KEY) return bad("Не задан UPLOAD_KEY в переменных окружения");
+
 
     const form = await request.formData();
 
     const reg = String(form.get("reg") || "").trim();
-    const key = String(form.get("key") || "").trim();
+
     const studentName = String(form.get("studentName") || "").trim();
 
     const receipt = form.get("receipt");
     const documentFile = form.get("document");
 
     if (!reg || !studentName) return bad("Не заполнены reg или studentName");
-    if (!UPLOAD_KEY) return bad("UPLOAD_KEY не задан на сервере");
-    if (key !== UPLOAD_KEY) return bad("Неверный ключ доступа");
+
+
     if (!(receipt instanceof File)) return bad("Не прикреплен файл чека");
     if (!(documentFile instanceof File)) return bad("Не прикреплен файл документа");
 
@@ -44,7 +44,7 @@ export async function POST(request: Request) {
 
     const payload = {
       reg,
-      key, // тот же ключ, GAS тоже проверит
+     // тот же ключ, GAS тоже проверит
       studentName,
       receipt: {
         name: receipt.name,

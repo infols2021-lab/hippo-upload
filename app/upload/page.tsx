@@ -235,7 +235,7 @@ function UploadInner() {
 
   const regKey = useMemo(() => (sp.get("reg") || "bel").trim(), [sp]);
   const regionName = REGIONS[regKey] || REGIONS["bel"];
-  const key = useMemo(() => (sp.get("key") || "").trim(), [sp]);
+
 
   const [studentName, setStudentName] = useState("");
   const [receipt, setReceipt] = useState<File | null>(null);
@@ -251,7 +251,7 @@ function UploadInner() {
     e.preventDefault();
     setMsg("");
 
-    if (!key) return setMsg("❌ В ссылке отсутствует ключ доступа (key). Откройте ссылку из письма.");
+
     if (!studentName.trim()) return setMsg("❌ Введите ФИО.");
     if (!receipt) return setMsg("❌ Прикрепите сканы оплаты.");
     if (!docFile) return setMsg("❌ Прикрепите документ.");
@@ -262,7 +262,7 @@ function UploadInner() {
 
       const fd = new FormData();
       fd.append("reg", regKey);
-      fd.append("key", key);
+
       fd.append("studentName", studentName.trim());
       fd.append("receipt", receipt);
       fd.append("document", docFile);
@@ -467,23 +467,10 @@ function UploadInner() {
               </div>
             )}
 
-            {!key && (
-              <div
-                style={{
-                  marginTop: "14px",
-                  padding: "12px 14px",
-                  borderRadius: "14px",
-                  fontWeight: 700,
-                  fontSize: "13px",
-                  textAlign: "center",
-                  background: "rgba(255, 236, 236, 0.9)",
-                  border: "2px solid rgba(220, 90, 90, 0.3)",
-                  color: "#991b1b",
-                }}
-              >
-                Ссылка открыта без ключа доступа. Откройте ссылку из письма.
-              </div>
-            )}
+        
+            
+            
+            
           </form>
         </section>
       </main>
