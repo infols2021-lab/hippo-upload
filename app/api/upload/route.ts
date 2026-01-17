@@ -4,20 +4,26 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
+const MAX_MB = 5;
+
 function bad(message: string, status = 400) {
   return NextResponse.json({ ok: false, message }, { status });
 }
 
 function isFileLike(x: unknown): x is File {
-  // В Vercel Node runtime File обычно существует, но подстрахуемся
   return !!x && typeof (x as any).arrayBuffer === "function" && typeof (x as any).size === "number";
 }
 
 function isPdfByNameOrType(file: any): boolean {
   const name = String(file?.name ?? "");
   const type = String(file?.type ?? "");
-  // без toLowerCase: regex i
   return /\.pdf$/i.test(name) || /pdf/i.test(type);
+}
+
+function isAllowedByNameOrType(file: any): boolean {
+  const name = String(file?.name ?? "");
+  const type = String(file?.type ?? "");
+  return /\.(pdf|png|jpe?g)$/i.test(name) || /pdf|png|jpe?g/i.test(type);
 }
 
 async function looksEncryptedPdf(file: any): Promise<boolean> {
@@ -27,12 +33,7 @@ async function looksEncryptedPdf(file: any): Promise<boolean> {
   const ab = await file.slice(0, 1024 * 1024).arrayBuffer();
   const txt = Buffer.from(ab).toString("latin1");
 
-  // маркеры шифрования
-  return (
-    txt.includes("/Encrypt") ||
-    txt.includes("Filter/Standard") ||
-    txt.includes("Filter /Standard")
-  );
+  return txt.includes("/Encrypt") || txt.includes("Filter/Standard") || txt.includes("Filter /Standard");
 }
 
 async function fileToBase64(file: any) {
@@ -52,9 +53,8 @@ export async function POST(request: Request) {
 
     const receipt = form.get("receipt");
     const documentFile = form.get("document");
-    const parentDocumentFile = form.get("parentDocument"); // опционально
+    const parentDocumentFile = form.get("parentDocument");
 
-    // ЛОГИ (помогают поймать “что пришло”)
     console.log("UPLOAD META", {
       reg,
       studentNameLen: studentName.length,
@@ -83,16 +83,22 @@ export async function POST(request: Request) {
     if (!isFileLike(receipt)) return bad("Не прикреплен файл чека");
     if (!isFileLike(documentFile)) return bad("Не прикреплен файл документа кандидата");
 
-    const MAX_MB = 5;
-    const maxBytes = MAX_MB * 1024 * 1024;
+    // форматы
+    if (!isAllowedByNameOrType(receipt)) return bad("Чек: разрешены только PDF/JPG/PNG");
+    if (!isAllowedByNameOrType(documentFile)) return bad("Документ кандидата: разрешены только PDF/JPG/PNG");
+    if (isFileLike(parentDocumentFile) && !isAllowedByNameOrType(parentDocumentFile)) {
+      return bad("Документ родителя: разрешены только PDF/JPG/PNG");
+    }
 
+    // лимит
+    const maxBytes = MAX_MB * 1024 * 1024;
     if (receipt.size > maxBytes) return bad(`Чек больше ${MAX_MB}MB — уменьшите файл`);
     if (documentFile.size > maxBytes) return bad(`Документ кандидата больше ${MAX_MB}MB — уменьшите файл`);
     if (isFileLike(parentDocumentFile) && parentDocumentFile.size > maxBytes) {
       return bad(`Документ родителя больше ${MAX_MB}MB — уменьшите файл`);
     }
 
-    // Детект “защищённых” PDF
+    // детект защищённых PDF (частая причина “не грузится”)
     if (await looksEncryptedPdf(receipt)) {
       return bad("Чек PDF защищён/зашифрован. Пересохраните через «Печать → PDF» или загрузите JPG/PNG.");
     }
@@ -103,30 +109,27 @@ export async function POST(request: Request) {
       return bad("Документ родителя PDF защищён/зашифрован. Пересохраните через «Печать → PDF» или загрузите JPG/PNG.");
     }
 
-    const receiptBase64 = await fileToBase64(receipt);
-    const documentBase64 = await fileToBase64(documentFile);
-
+    // base64
     const payload: any = {
       reg,
       studentName,
       receipt: {
         name: String((receipt as any)?.name ?? "receipt"),
         type: String((receipt as any)?.type ?? "application/octet-stream"),
-        base64: receiptBase64,
+        base64: await fileToBase64(receipt),
       },
       document: {
         name: String((documentFile as any)?.name ?? "document"),
         type: String((documentFile as any)?.type ?? "application/octet-stream"),
-        base64: documentBase64,
+        base64: await fileToBase64(documentFile),
       },
     };
 
     if (isFileLike(parentDocumentFile)) {
-      const parentBase64 = await fileToBase64(parentDocumentFile);
       payload.parentDocument = {
         name: String((parentDocumentFile as any)?.name ?? "parentDocument"),
         type: String((parentDocumentFile as any)?.type ?? "application/octet-stream"),
-        base64: parentBase64,
+        base64: await fileToBase64(parentDocumentFile),
       };
     }
 
@@ -136,12 +139,20 @@ export async function POST(request: Request) {
       body: JSON.stringify(payload),
     });
 
-    const j = await r.json().catch(() => null);
-    if (!j) return bad("GAS вернул не-JSON ответ", 502);
+    // GAS часто возвращает HTTP 200 даже при ошибке — поэтому парсим ответ и статус ставим по j.ok
+    const text = await r.text();
+    let j: any = null;
+    try {
+      j = JSON.parse(text);
+    } catch {
+      console.error("GAS NON-JSON:", text?.slice?.(0, 800));
+      return bad("GAS вернул не-JSON ответ", 502);
+    }
 
-    return NextResponse.json(j, { status: r.ok ? 200 : 400 });
+    const ok = !!j?.ok;
+    return NextResponse.json(j, { status: ok ? 200 : 400 });
   } catch (e: any) {
-    console.error("UPLOAD ERROR", e);
+    console.error("UPLOAD ERROR", e?.stack || e);
     return bad("Ошибка сервера: " + String(e?.message || e), 500);
   }
 }
