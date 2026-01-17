@@ -13,6 +13,33 @@ async function fileToBase64(file: File) {
   return Buffer.from(ab).toString("base64");
 }
 
+/**
+ * Быстрая эвристика: проверяем первые ~1MB PDF на маркеры шифрования.
+ * Важно: даже если PDF открывается на ПК без пароля, он может быть encrypted/secured.
+ * Google Drive это часто показывает как "защищён паролем".
+ */
+async function looksEncryptedPdf(file: File): Promise<boolean> {
+  const name = (file.name || "").toLowerCase();
+  const type = (file.type || "").toLowerCase();
+  const isPdf = type.includes("pdf") || name.endsWith(".pdf");
+  if (!isPdf) return false;
+
+  // читаем только начало, чтобы не жрать память/время
+  const ab = await file.slice(0, 1024 * 1024).arrayBuffer();
+  const txt = Buffer.from(ab).toString("latin1");
+
+  // самые частые маркеры
+  if (txt.includes("/Encrypt")) return true;
+
+  // иногда пишется без пробелов
+  if (txt.includes("Filter/Standard")) return true;
+
+  // иногда с пробелом
+  if (txt.includes("Filter /Standard")) return true;
+
+  return false;
+}
+
 export async function POST(request: Request) {
   try {
     const GAS_WEBAPP_URL = String(process.env.GAS_WEBAPP_URL || "").trim();
@@ -25,24 +52,43 @@ export async function POST(request: Request) {
 
     const receipt = form.get("receipt");
     const documentFile = form.get("document");
-    const parentDocumentFile = form.get("parentDocument"); // может отсутствовать
+    const parentDocumentFile = form.get("parentDocument"); // опционально
 
     if (!reg) return bad("Не передан reg");
     if (!studentName) return bad("Не заполнено ФИО");
     if (!(receipt instanceof File)) return bad("Не прикреплен файл чека");
     if (!(documentFile instanceof File)) return bad("Не прикреплен файл документа кандидата");
 
-    // лимит на файл
+    // ✅ лимит (в реальности помогает против 413 и перегруза GAS)
     const MAX_MB = 5;
     const maxBytes = MAX_MB * 1024 * 1024;
 
     if (receipt.size > maxBytes) return bad(`Чек больше ${MAX_MB}MB — уменьшите файл`);
     if (documentFile.size > maxBytes) return bad(`Документ кандидата больше ${MAX_MB}MB — уменьшите файл`);
-
-    if (parentDocumentFile instanceof File) {
-      if (parentDocumentFile.size > maxBytes) return bad(`Документ родителя больше ${MAX_MB}MB — уменьшите файл`);
+    if (parentDocumentFile instanceof File && parentDocumentFile.size > maxBytes) {
+      return bad(`Документ родителя больше ${MAX_MB}MB — уменьшите файл`);
     }
 
+    // ✅ детект encrypted PDF
+    if (await looksEncryptedPdf(receipt)) {
+      return bad(
+        "Чек в формате PDF защищён/зашифрован. Пересохраните через «Печать → PDF» (Microsoft Print to PDF / Save as PDF) или загрузите JPG/PNG."
+      );
+    }
+    if (await looksEncryptedPdf(documentFile)) {
+      return bad(
+        "Документ кандидата в формате PDF защищён/зашифрован. Пересохраните через «Печать → PDF» (Microsoft Print to PDF / Save as PDF) или загрузите JPG/PNG."
+      );
+    }
+    if (parentDocumentFile instanceof File) {
+      if (await looksEncryptedPdf(parentDocumentFile)) {
+        return bad(
+          "Документ родителя в формате PDF защищён/зашифрован. Пересохраните через «Печать → PDF» (Microsoft Print to PDF / Save as PDF) или загрузите JPG/PNG."
+        );
+      }
+    }
+
+    // конвертация в base64
     const receiptBase64 = await fileToBase64(receipt);
     const documentBase64 = await fileToBase64(documentFile);
 
@@ -71,6 +117,7 @@ export async function POST(request: Request) {
       };
     }
 
+    // отправка в GAS
     const r = await fetch(GAS_WEBAPP_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
