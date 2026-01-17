@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 function bad(message: string, status = 400) {
   return NextResponse.json({ ok: false, message }, { status });
@@ -23,24 +25,28 @@ export async function POST(request: Request) {
 
     const receipt = form.get("receipt");
     const documentFile = form.get("document");
+    const parentDocumentFile = form.get("parentDocument"); // может отсутствовать
 
     if (!reg) return bad("Не передан reg");
     if (!studentName) return bad("Не заполнено ФИО");
     if (!(receipt instanceof File)) return bad("Не прикреплен файл чека");
-    if (!(documentFile instanceof File)) return bad("Не прикреплен файл документа");
+    if (!(documentFile instanceof File)) return bad("Не прикреплен файл документа кандидата");
 
-    // ⚠️ Анти-413: ставим безопасный лимит.
-    // Base64 увеличивает размер ~на 33%, плюс накладные расходы — лучше держать <= 5MB/файл.
+    // лимит на файл
     const MAX_MB = 5;
     const maxBytes = MAX_MB * 1024 * 1024;
+
     if (receipt.size > maxBytes) return bad(`Чек больше ${MAX_MB}MB — уменьшите файл`);
-    if (documentFile.size > maxBytes) return bad(`Документ больше ${MAX_MB}MB — уменьшите файл`);
+    if (documentFile.size > maxBytes) return bad(`Документ кандидата больше ${MAX_MB}MB — уменьшите файл`);
+
+    if (parentDocumentFile instanceof File) {
+      if (parentDocumentFile.size > maxBytes) return bad(`Документ родителя больше ${MAX_MB}MB — уменьшите файл`);
+    }
 
     const receiptBase64 = await fileToBase64(receipt);
     const documentBase64 = await fileToBase64(documentFile);
 
-    // ✅ ключ убрали — отправляем просто reg + fio + 2 файла
-    const payload = {
+    const payload: any = {
       reg,
       studentName,
       receipt: {
@@ -55,6 +61,16 @@ export async function POST(request: Request) {
       },
     };
 
+    // ✅ опционально добавляем parentDocument
+    if (parentDocumentFile instanceof File) {
+      const parentBase64 = await fileToBase64(parentDocumentFile);
+      payload.parentDocument = {
+        name: parentDocumentFile.name,
+        type: parentDocumentFile.type || "application/octet-stream",
+        base64: parentBase64,
+      };
+    }
+
     const r = await fetch(GAS_WEBAPP_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -64,10 +80,8 @@ export async function POST(request: Request) {
     const j = await r.json().catch(() => null);
     if (!j) return bad("GAS вернул не-JSON ответ", 502);
 
-    // пробрасываем ответ GAS как есть
     return NextResponse.json(j, { status: r.ok ? 200 : 400 });
   } catch (e: any) {
-    // Если Vercel/Next режет запрос по размеру — иногда будет 413 до сюда.
     return bad("Ошибка сервера: " + String(e?.message || e), 500);
   }
 }

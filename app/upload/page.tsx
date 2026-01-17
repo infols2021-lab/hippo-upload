@@ -63,6 +63,7 @@ function CheckIcon() {
 type FileUploadButtonProps = {
   label: string;
   hint?: string;
+  required?: boolean;
   file: File | null;
   onPick: (f: File | null) => void;
   inputRef: React.RefObject<HTMLInputElement | null>;
@@ -70,7 +71,16 @@ type FileUploadButtonProps = {
   maxMb?: number;
 };
 
-function FileUploadButton({ label, hint, file, onPick, inputRef, accept, maxMb = 5 }: FileUploadButtonProps) {
+function FileUploadButton({
+  label,
+  hint,
+  required = true,
+  file,
+  onPick,
+  inputRef,
+  accept,
+  maxMb = 5,
+}: FileUploadButtonProps) {
   const [drag, setDrag] = useState(false);
   const open = () => inputRef.current?.click();
 
@@ -96,7 +106,7 @@ function FileUploadButton({ label, hint, file, onPick, inputRef, accept, maxMb =
       <div style={{ marginBottom: "8px" }}>
         <div style={{ fontSize: "16px", fontWeight: "700", color: "#2b3f63", marginBottom: "4px" }}>
           {label}
-          <span style={{ color: "#ff5a5a" }}> *</span>
+          {required && <span style={{ color: "#ff5a5a" }}> *</span>}
         </div>
         {hint && <div style={{ fontSize: "13px", color: "rgba(43, 63, 99, 0.65)", lineHeight: 1.25 }}>{hint}</div>}
       </div>
@@ -194,7 +204,18 @@ function FileUploadButton({ label, hint, file, onPick, inputRef, accept, maxMb =
               </div>
               <div style={{ fontSize: "12px", color: "rgba(43, 63, 99, 0.65)", marginTop: "2px" }}>{formatSize(file.size)}</div>
             </div>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "28px", height: "28px", background: "rgba(0, 168, 107, 0.15)", borderRadius: "50%", color: "#006b40" }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: "28px",
+                height: "28px",
+                background: "rgba(0, 168, 107, 0.15)",
+                borderRadius: "50%",
+                color: "#006b40",
+              }}
+            >
               <CheckIcon />
             </div>
           </div>
@@ -212,7 +233,6 @@ function FileUploadButton({ label, hint, file, onPick, inputRef, accept, maxMb =
 
 function UploadInner() {
   const sp = useSearchParams();
-
   const regKey = useMemo(() => (sp.get("reg") || "bel").trim(), [sp]);
   const regionName = REGIONS[regKey] || REGIONS["bel"];
 
@@ -220,11 +240,26 @@ function UploadInner() {
   const [receipt, setReceipt] = useState<File | null>(null);
   const [docFile, setDocFile] = useState<File | null>(null);
 
+  const [isUnder14, setIsUnder14] = useState(false);
+  const [parentDocFile, setParentDocFile] = useState<File | null>(null);
+
   const [isSending, setIsSending] = useState(false);
   const [msg, setMsg] = useState("");
 
   const receiptRef = useRef<HTMLInputElement | null>(null);
   const docRef = useRef<HTMLInputElement | null>(null);
+  const parentDocRef = useRef<HTMLInputElement | null>(null);
+
+  const styles = `
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateY(-10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes shine {
+      0%, 100% { transform: translateX(-40%); opacity: 0.55; }
+      50% { transform: translateX(20%); opacity: 0.85; }
+    }
+  `;
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -232,7 +267,11 @@ function UploadInner() {
 
     if (!studentName.trim()) return setMsg("❌ Введите ФИО.");
     if (!receipt) return setMsg("❌ Прикрепите сканы оплаты.");
-    if (!docFile) return setMsg("❌ Прикрепите документ.");
+    if (!docFile) return setMsg("❌ Прикрепите документ кандидата.");
+
+    if (isUnder14 && !parentDocFile) {
+      return setMsg("❌ Кандидату < 14 лет — прикрепите документ родителя.");
+    }
 
     try {
       setIsSending(true);
@@ -244,11 +283,15 @@ function UploadInner() {
       fd.append("receipt", receipt);
       fd.append("document", docFile);
 
+      // ✅ отправляем только если нужно
+      if (isUnder14 && parentDocFile) {
+        fd.append("parentDocument", parentDocFile);
+      }
+
       const res = await fetch("/api/upload", { method: "POST", body: fd });
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok || !data?.ok) {
-        // 413 иногда возвращается без JSON — поэтому сообщаем по-человечески
         if (res.status === 413) {
           setMsg("❌ Слишком большой размер файлов. Уменьшите файлы (до 5 MB каждый) и попробуйте снова.");
         } else {
@@ -262,6 +305,8 @@ function UploadInner() {
       setStudentName("");
       setReceipt(null);
       setDocFile(null);
+      setIsUnder14(false);
+      setParentDocFile(null);
 
       const formEl = document.getElementById("uForm") as HTMLFormElement | null;
       formEl?.reset();
@@ -271,17 +316,6 @@ function UploadInner() {
       setIsSending(false);
     }
   }
-
-  const styles = `
-    @keyframes slideIn {
-      from { opacity: 0; transform: translateY(-10px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-    @keyframes shine {
-      0%, 100% { transform: translateX(-40%); opacity: 0.55; }
-      50% { transform: translateX(20%); opacity: 0.85; }
-    }
-  `;
 
   return (
     <>
@@ -351,10 +385,44 @@ function UploadInner() {
                 }}
                 value={studentName}
                 onChange={(e) => setStudentName(e.target.value)}
-                placeholder="Введите ваше ФИО"
+                placeholder="Введите ФИО кандидата"
                 autoComplete="name"
               />
             </div>
+
+            {/* ✅ чекбокс */}
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "10px",
+                padding: "12px 14px",
+                borderRadius: "14px",
+                background: "rgba(255,255,255,0.55)",
+                border: "1px solid rgba(120, 160, 230, 0.35)",
+                boxShadow: "0 10px 20px rgba(50, 85, 150, 0.08)",
+                marginBottom: "18px",
+                cursor: "pointer",
+                userSelect: "none",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={isUnder14}
+                onChange={(e) => {
+                  const v = e.target.checked;
+                  setIsUnder14(v);
+                  if (!v) setParentDocFile(null);
+                }}
+                style={{ width: 18, height: 18 }}
+              />
+              <div style={{ color: "#2b3f63", fontWeight: 800, lineHeight: 1.2 }}>
+                Кандидату не исполнилось 14 лет
+                <div style={{ fontWeight: 600, fontSize: 12, color: "rgba(43, 63, 99, 0.65)", marginTop: 2 }}>
+                  Если включить — появится поле для документа родителя
+                </div>
+              </div>
+            </label>
 
             <FileUploadButton
               label="Сканы оплаты:"
@@ -364,17 +432,34 @@ function UploadInner() {
               inputRef={receiptRef}
               accept=".jpg,.jpeg,.png,.pdf"
               maxMb={5}
+              required
             />
 
             <FileUploadButton
-              label="Документы (Свидетельство о рождении / Паспорт РФ / Загранпаспорт):"
+              label="Документ кандидата (Свидетельство о рождении / Паспорт РФ / Загранпаспорт):"
               hint="JPG/PNG/PDF до 5 MB."
               file={docFile}
               onPick={setDocFile}
               inputRef={docRef}
               accept=".jpg,.jpeg,.png,.pdf"
               maxMb={5}
+              required
             />
+
+            {isUnder14 && (
+              <div style={{ animation: "slideIn 0.25s ease" }}>
+                <FileUploadButton
+                  label="Документ родителя (если кандидату < 14):"
+                  hint="JPG/PNG/PDF до 5 MB."
+                  file={parentDocFile}
+                  onPick={setParentDocFile}
+                  inputRef={parentDocRef}
+                  accept=".jpg,.jpeg,.png,.pdf"
+                  maxMb={5}
+                  required
+                />
+              </div>
+            )}
 
             <button
               style={{
