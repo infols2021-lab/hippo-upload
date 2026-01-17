@@ -8,36 +8,36 @@ function bad(message: string, status = 400) {
   return NextResponse.json({ ok: false, message }, { status });
 }
 
-function isFile(x: unknown): x is File {
-  return typeof File !== "undefined" && x instanceof File;
+function isFileLike(x: unknown): x is File {
+  // В Vercel Node runtime File обычно существует, но подстрахуемся
+  return !!x && typeof (x as any).arrayBuffer === "function" && typeof (x as any).size === "number";
 }
 
-async function fileToBase64(file: File) {
-  const ab = await file.arrayBuffer();
-  return Buffer.from(ab).toString("base64");
+function isPdfByNameOrType(file: any): boolean {
+  const name = String(file?.name ?? "");
+  const type = String(file?.type ?? "");
+  // без toLowerCase: regex i
+  return /\.pdf$/i.test(name) || /pdf/i.test(type);
 }
 
-/**
- * Надёжная эвристика: проверяем первые ~1MB PDF на маркеры шифрования.
- * Сделано максимально безопасно: никаких .toLowerCase() на undefined.
- */
-async function looksEncryptedPdfSafe(file: unknown): Promise<boolean> {
-  if (!isFile(file)) return false;
-
-  const name = String((file as any)?.name || "").toLowerCase();
-  const type = String((file as any)?.type || "").toLowerCase();
-
-  const isPdf = type.includes("pdf") || name.endsWith(".pdf");
-  if (!isPdf) return false;
+async function looksEncryptedPdf(file: any): Promise<boolean> {
+  if (!isFileLike(file)) return false;
+  if (!isPdfByNameOrType(file)) return false;
 
   const ab = await file.slice(0, 1024 * 1024).arrayBuffer();
   const txt = Buffer.from(ab).toString("latin1");
 
+  // маркеры шифрования
   return (
     txt.includes("/Encrypt") ||
     txt.includes("Filter/Standard") ||
     txt.includes("Filter /Standard")
   );
+}
+
+async function fileToBase64(file: any) {
+  const ab = await file.arrayBuffer();
+  return Buffer.from(ab).toString("base64");
 }
 
 export async function POST(request: Request) {
@@ -47,43 +47,60 @@ export async function POST(request: Request) {
 
     const form = await request.formData();
 
-    const reg = String(form.get("reg") || "").trim();
-    const studentName = String(form.get("studentName") || "").trim();
+    const reg = String(form.get("reg") ?? "").trim();
+    const studentName = String(form.get("studentName") ?? "").trim();
 
     const receipt = form.get("receipt");
     const documentFile = form.get("document");
     const parentDocumentFile = form.get("parentDocument"); // опционально
 
+    // ЛОГИ (помогают поймать “что пришло”)
+    console.log("UPLOAD META", {
+      reg,
+      studentNameLen: studentName.length,
+      receipt: {
+        exists: !!receipt,
+        name: String((receipt as any)?.name ?? ""),
+        type: String((receipt as any)?.type ?? ""),
+        size: Number((receipt as any)?.size ?? -1),
+      },
+      document: {
+        exists: !!documentFile,
+        name: String((documentFile as any)?.name ?? ""),
+        type: String((documentFile as any)?.type ?? ""),
+        size: Number((documentFile as any)?.size ?? -1),
+      },
+      parent: {
+        exists: !!parentDocumentFile,
+        name: String((parentDocumentFile as any)?.name ?? ""),
+        type: String((parentDocumentFile as any)?.type ?? ""),
+        size: Number((parentDocumentFile as any)?.size ?? -1),
+      },
+    });
+
     if (!reg) return bad("Не передан reg");
     if (!studentName) return bad("Не заполнено ФИО");
-    if (!isFile(receipt)) return bad("Не прикреплен файл чека");
-    if (!isFile(documentFile)) return bad("Не прикреплен файл документа кандидата");
+    if (!isFileLike(receipt)) return bad("Не прикреплен файл чека");
+    if (!isFileLike(documentFile)) return bad("Не прикреплен файл документа кандидата");
 
-    // лимит на файл
     const MAX_MB = 5;
     const maxBytes = MAX_MB * 1024 * 1024;
 
     if (receipt.size > maxBytes) return bad(`Чек больше ${MAX_MB}MB — уменьшите файл`);
     if (documentFile.size > maxBytes) return bad(`Документ кандидата больше ${MAX_MB}MB — уменьшите файл`);
-    if (isFile(parentDocumentFile) && parentDocumentFile.size > maxBytes) {
+    if (isFileLike(parentDocumentFile) && parentDocumentFile.size > maxBytes) {
       return bad(`Документ родителя больше ${MAX_MB}MB — уменьшите файл`);
     }
 
-    // детект encrypted PDF (без крашей)
-    if (await looksEncryptedPdfSafe(receipt)) {
-      return bad(
-        "Чек в формате PDF защищён/зашифрован. Пересохраните через «Печать → PDF» или загрузите JPG/PNG."
-      );
+    // Детект “защищённых” PDF
+    if (await looksEncryptedPdf(receipt)) {
+      return bad("Чек PDF защищён/зашифрован. Пересохраните через «Печать → PDF» или загрузите JPG/PNG.");
     }
-    if (await looksEncryptedPdfSafe(documentFile)) {
-      return bad(
-        "Документ кандидата в формате PDF защищён/зашифрован. Пересохраните через «Печать → PDF» или загрузите JPG/PNG."
-      );
+    if (await looksEncryptedPdf(documentFile)) {
+      return bad("Документ кандидата PDF защищён/зашифрован. Пересохраните через «Печать → PDF» или загрузите JPG/PNG.");
     }
-    if (await looksEncryptedPdfSafe(parentDocumentFile)) {
-      return bad(
-        "Документ родителя в формате PDF защищён/зашифрован. Пересохраните через «Печать → PDF» или загрузите JPG/PNG."
-      );
+    if (await looksEncryptedPdf(parentDocumentFile)) {
+      return bad("Документ родителя PDF защищён/зашифрован. Пересохраните через «Печать → PDF» или загрузите JPG/PNG.");
     }
 
     const receiptBase64 = await fileToBase64(receipt);
@@ -93,23 +110,22 @@ export async function POST(request: Request) {
       reg,
       studentName,
       receipt: {
-        name: receipt.name || "receipt",
-        type: receipt.type || "application/octet-stream",
+        name: String((receipt as any)?.name ?? "receipt"),
+        type: String((receipt as any)?.type ?? "application/octet-stream"),
         base64: receiptBase64,
       },
       document: {
-        name: documentFile.name || "document",
-        type: documentFile.type || "application/octet-stream",
+        name: String((documentFile as any)?.name ?? "document"),
+        type: String((documentFile as any)?.type ?? "application/octet-stream"),
         base64: documentBase64,
       },
     };
 
-    // опционально parentDocument
-    if (isFile(parentDocumentFile)) {
+    if (isFileLike(parentDocumentFile)) {
       const parentBase64 = await fileToBase64(parentDocumentFile);
       payload.parentDocument = {
-        name: parentDocumentFile.name || "parentDocument",
-        type: parentDocumentFile.type || "application/octet-stream",
+        name: String((parentDocumentFile as any)?.name ?? "parentDocument"),
+        type: String((parentDocumentFile as any)?.type ?? "application/octet-stream"),
         base64: parentBase64,
       };
     }
@@ -125,6 +141,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json(j, { status: r.ok ? 200 : 400 });
   } catch (e: any) {
+    console.error("UPLOAD ERROR", e);
     return bad("Ошибка сервера: " + String(e?.message || e), 500);
   }
 }
