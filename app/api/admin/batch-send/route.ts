@@ -8,15 +8,30 @@ function bad(message: string, status = 400, extra?: any) {
   return NextResponse.json({ ok: false, message, ...(extra || {}) }, { status });
 }
 
-function isCronAuthorized(req: Request) {
+function cronAuth(req: Request) {
   const secret = String(process.env.CRON_SECRET || "").trim();
-  const tokenH = String(req.headers.get("x-cron-token") || "").trim();
-  const tokenQ = String(new URL(req.url).searchParams.get("token") || "").trim();
+
+  const x = String(req.headers.get("x-cron-token") || "").trim();
+  const auth = String(req.headers.get("authorization") || "").trim();
+  const q = String(new URL(req.url).searchParams.get("token") || "").trim();
+
+  const authOk =
+    !!secret &&
+    (x === secret ||
+      q === secret ||
+      auth === secret ||
+      auth === `Bearer ${secret}` ||
+      auth === `bearer ${secret}`);
+
   return {
-    secretSet: !!secret,
-    ok: !!secret && (tokenH === secret || tokenQ === secret),
-    tokenH: tokenH ? "present" : "missing",
-    tokenQ: tokenQ ? "present" : "missing",
+    ok: authOk,
+    debug: {
+      secretSet: !!secret,
+      hasX: !!x,
+      hasAuth: !!auth,
+      hasQ: !!q,
+      authPrefix: auth ? auth.slice(0, 12) : "",
+    },
   };
 }
 
@@ -78,20 +93,13 @@ async function sendOneViaGas(sb: ReturnType<typeof supabaseAdmin>, row: any) {
 }
 
 export async function POST(req: Request) {
-  // ✅ либо cron по CRON_SECRET, либо админ Bearer
-  const cron = isCronAuthorized(req);
+  const cron = cronAuth(req);
 
   if (!cron.ok) {
     const a = await requireAdminFromAuthHeader(req);
     if (!a.ok) {
-      // ключевая диагностика — почему 401:
-      return bad(a.message, a.status, {
-        debug: {
-          cron: cron,
-          hasAuthHeader: !!req.headers.get("authorization"),
-          note: "Если это вызов от cron — проверь CRON_SECRET в Production и заголовок x-cron-token",
-        },
-      });
+      // ✅ чтобы сразу видеть причину, вернём debug
+      return bad(a.message, a.status, { debug: { cron: cron.debug } });
     }
   }
 
