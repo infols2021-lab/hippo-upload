@@ -6,7 +6,8 @@ export const dynamic = "force-dynamic";
 // Vercel Cron будет вызывать /api/cron/send и добавлять заголовок x-vercel-cron: 1
 export async function GET(req: Request) {
   try {
-    const isCron = req.headers.get("x-vercel-cron") === "1";
+    const isCron = req.headers.has("x-vercel-cron");
+
     if (!isCron) {
       return NextResponse.json({ ok: false, message: "Forbidden (not a cron call)" }, { status: 403 });
     }
