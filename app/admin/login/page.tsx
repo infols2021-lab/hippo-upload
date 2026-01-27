@@ -24,7 +24,8 @@ export default function AdminLoginPage() {
         setMsg("❌ " + String(error?.message || "Не удалось войти"));
         return;
       }
-      window.location.href = "/admin";
+      const next = new URLSearchParams(window.location.search).get("next") || "/admin";
+window.location.href = next;
     } finally {
       setLoading(false);
     }
