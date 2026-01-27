@@ -26,6 +26,8 @@ export default function AdminLoginPage() {
       }
       const next = new URLSearchParams(window.location.search).get("next") || "/admin";
 window.location.href = next;
+window.location.reload();
+
     } finally {
       setLoading(false);
     }
