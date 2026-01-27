@@ -1,8 +1,8 @@
 {
   "crons": [
     {
-      "path": "/api/cron/send?token=${CRON_SECRET}",
-      "schedule": "0 14 * * *"
+      "path": "/api/cron/send",
+      "schedule": "35 14 * * *"
     }
   ]
 }
