@@ -4,19 +4,20 @@ import { requireAdminFromAuthHeader } from "@/app/api/admin/_auth";
 
 export const dynamic = "force-dynamic";
 
-function bad(message: string, status = 400) {
-  return NextResponse.json({ ok: false, message }, { status });
+function bad(message: string, status = 400, extra?: any) {
+  return NextResponse.json({ ok: false, message, ...(extra || {}) }, { status });
 }
 
 function isCronAuthorized(req: Request) {
   const secret = String(process.env.CRON_SECRET || "").trim();
-  if (!secret) return false;
-
-  const url = new URL(req.url);
-  const tokenQ = String(url.searchParams.get("token") || "");
-  const tokenH = String(req.headers.get("x-cron-token") || "");
-
-  return tokenQ === secret || tokenH === secret;
+  const tokenH = String(req.headers.get("x-cron-token") || "").trim();
+  const tokenQ = String(new URL(req.url).searchParams.get("token") || "").trim();
+  return {
+    secretSet: !!secret,
+    ok: !!secret && (tokenH === secret || tokenQ === secret),
+    tokenH: tokenH ? "present" : "missing",
+    tokenQ: tokenQ ? "present" : "missing",
+  };
 }
 
 function extFromPath(p: string) {
@@ -77,22 +78,27 @@ async function sendOneViaGas(sb: ReturnType<typeof supabaseAdmin>, row: any) {
 }
 
 export async function POST(req: Request) {
-  // ✅ либо админ Bearer, либо CRON_SECRET
-  const cronOk = isCronAuthorized(req);
-  if (!cronOk) {
+  // ✅ либо cron по CRON_SECRET, либо админ Bearer
+  const cron = isCronAuthorized(req);
+
+  if (!cron.ok) {
     const a = await requireAdminFromAuthHeader(req);
-    if (!a.ok) return bad(a.message, a.status);
+    if (!a.ok) {
+      // ключевая диагностика — почему 401:
+      return bad(a.message, a.status, {
+        debug: {
+          cron: cron,
+          hasAuthHeader: !!req.headers.get("authorization"),
+          note: "Если это вызов от cron — проверь CRON_SECRET в Production и заголовок x-cron-token",
+        },
+      });
+    }
   }
 
   const sb = supabaseAdmin();
-
   const body = await req.json().catch(() => ({} as any));
 
-  // mode:
-  // "unsent" -> отправить все sent=false
-  // "retry_errors" -> отправить только sent=false AND sent_error not null
   const mode = String(body?.mode || "unsent");
-
   const regionOrder: string[] = Array.isArray(body?.regionOrder) ? body.regionOrder.map(String) : [];
   const limit = Math.max(1, Math.min(200, Number(body?.limit || 80)));
 
