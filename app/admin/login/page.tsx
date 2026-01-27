@@ -1,4 +1,6 @@
 "use client";
+export const dynamic = "force-dynamic";
+
 
 import { useState } from "react";
 import { supabaseBrowser } from "@/app/lib/supabase/browser";
