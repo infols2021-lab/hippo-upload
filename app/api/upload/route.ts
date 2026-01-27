@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
+import { supabaseAdmin } from "@/app/lib/supabase/admin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 const MAX_MB = 5;
+const BUCKET = process.env.NEXT_PUBLIC_UPLOADS_BUCKET || "hippo-uploads";
 
 function bad(message: string, status = 400) {
   return NextResponse.json({ ok: false, message }, { status });
@@ -14,39 +16,29 @@ function isFileLike(x: unknown): x is File {
   return !!x && typeof (x as any).arrayBuffer === "function" && typeof (x as any).size === "number";
 }
 
-function isPdfByNameOrType(file: any): boolean {
+function isAllowedFileByNameOrType(file: any) {
   const name = String(file?.name ?? "");
   const type = String(file?.type ?? "");
-  return /\.pdf$/i.test(name) || /pdf/i.test(type);
+  const okByExt = /\.(pdf|png|jpe?g)$/i.test(name);
+  const okByType = /pdf|png|jpe?g/i.test(type);
+  return okByExt || okByType;
 }
 
-function isAllowedByNameOrType(file: any): boolean {
-  const name = String(file?.name ?? "");
-  const type = String(file?.type ?? "");
-  return /\.(pdf|png|jpe?g)$/i.test(name) || /pdf|png|jpe?g/i.test(type);
+function safeExt(name: string) {
+  const m = String(name || "").match(/\.([a-z0-9]+)$/i);
+  const ext = (m ? m[1] : "bin").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 10);
+  if (ext === "jpg" || ext === "jpeg" || ext === "png" || ext === "pdf") return ext;
+  return "bin";
 }
 
-async function looksEncryptedPdf(file: any): Promise<boolean> {
-  if (!isFileLike(file)) return false;
-  if (!isPdfByNameOrType(file)) return false;
-
-  const ab = await file.slice(0, 1024 * 1024).arrayBuffer();
-  const txt = Buffer.from(ab).toString("latin1");
-
-  return txt.includes("/Encrypt") || txt.includes("Filter/Standard") || txt.includes("Filter /Standard");
-}
-
-async function fileToBase64(file: any) {
+async function fileToBuffer(file: File) {
   const ab = await file.arrayBuffer();
-  return Buffer.from(ab).toString("base64");
+  return Buffer.from(ab);
 }
 
-export async function POST(request: Request) {
+export async function POST(req: Request) {
   try {
-    const GAS_WEBAPP_URL = String(process.env.GAS_WEBAPP_URL || "").trim();
-    if (!GAS_WEBAPP_URL) return bad("Не задан GAS_WEBAPP_URL в переменных окружения (Vercel)", 500);
-
-    const form = await request.formData();
+    const form = await req.formData();
 
     const reg = String(form.get("reg") ?? "").trim();
     const studentName = String(form.get("studentName") ?? "").trim();
@@ -55,7 +47,7 @@ export async function POST(request: Request) {
     const documentFile = form.get("document");
     const parentDocumentFile = form.get("parentDocument");
 
-    console.log("UPLOAD META", {
+    console.log("UPLOAD META (SUPABASE)", {
       reg,
       studentNameLen: studentName.length,
       receipt: {
@@ -83,14 +75,12 @@ export async function POST(request: Request) {
     if (!isFileLike(receipt)) return bad("Не прикреплен файл чека");
     if (!isFileLike(documentFile)) return bad("Не прикреплен файл документа кандидата");
 
-    // форматы
-    if (!isAllowedByNameOrType(receipt)) return bad("Чек: разрешены только PDF/JPG/PNG");
-    if (!isAllowedByNameOrType(documentFile)) return bad("Документ кандидата: разрешены только PDF/JPG/PNG");
-    if (isFileLike(parentDocumentFile) && !isAllowedByNameOrType(parentDocumentFile)) {
-      return bad("Документ родителя: разрешены только PDF/JPG/PNG");
+    if (!isAllowedFileByNameOrType(receipt)) return bad("Чек: разрешены PDF/JPG/JPEG/PNG");
+    if (!isAllowedFileByNameOrType(documentFile)) return bad("Документ: разрешены PDF/JPG/JPEG/PNG");
+    if (isFileLike(parentDocumentFile) && !isAllowedFileByNameOrType(parentDocumentFile)) {
+      return bad("Документ родителя: разрешены PDF/JPG/JPEG/PNG");
     }
 
-    // лимит
     const maxBytes = MAX_MB * 1024 * 1024;
     if (receipt.size > maxBytes) return bad(`Чек больше ${MAX_MB}MB — уменьшите файл`);
     if (documentFile.size > maxBytes) return bad(`Документ кандидата больше ${MAX_MB}MB — уменьшите файл`);
@@ -98,61 +88,50 @@ export async function POST(request: Request) {
       return bad(`Документ родителя больше ${MAX_MB}MB — уменьшите файл`);
     }
 
-    // детект защищённых PDF (частая причина “не грузится”)
-    if (await looksEncryptedPdf(receipt)) {
-      return bad("Чек PDF защищён/зашифрован. Пересохраните через «Печать → PDF» или загрузите JPG/PNG.");
-    }
-    if (await looksEncryptedPdf(documentFile)) {
-      return bad("Документ кандидата PDF защищён/зашифрован. Пересохраните через «Печать → PDF» или загрузите JPG/PNG.");
-    }
-    if (await looksEncryptedPdf(parentDocumentFile)) {
-      return bad("Документ родителя PDF защищён/зашифрован. Пересохраните через «Печать → PDF» или загрузите JPG/PNG.");
+    const sb = supabaseAdmin();
+
+    // ✅ ИДЕАЛЬНО: создаём стабильный id заявки и используем его в путях (ASCII всегда)
+    const id = globalThis.crypto?.randomUUID?.() || require("crypto").randomUUID();
+    const isUnder14 = isFileLike(parentDocumentFile);
+
+    const ts = new Date().toISOString().replace(/[:.]/g, "-");
+    const folder = `${reg}/${id}_${ts}`;
+
+    async function uploadOne(file: File, label: "receipt" | "document" | "parent") {
+      const ext = safeExt(file.name);
+      const path = `${folder}/${label}.${ext}`;
+
+      const buf = await fileToBuffer(file);
+      const { error } = await sb.storage.from(BUCKET).upload(path, buf, {
+        contentType: (file as any).type || "application/octet-stream",
+        upsert: false,
+      });
+
+      if (error) throw new Error(`Storage upload failed (${label}): ${error.message} | path=${path}`);
+      return path;
     }
 
-    // base64
-    const payload: any = {
+    const receiptPath = await uploadOne(receipt as File, "receipt");
+    const documentPath = await uploadOne(documentFile as File, "document");
+    const parentPath = isUnder14 ? await uploadOne(parentDocumentFile as File, "parent") : null;
+
+    // ✅ Пишем запись в таблицу с тем же id (чтобы всё стыковалось идеально)
+    const { error: dbErr } = await sb.from("upload_requests").insert({
+      id,
       reg,
-      studentName,
-      receipt: {
-        name: String((receipt as any)?.name ?? "receipt"),
-        type: String((receipt as any)?.type ?? "application/octet-stream"),
-        base64: await fileToBase64(receipt),
-      },
-      document: {
-        name: String((documentFile as any)?.name ?? "document"),
-        type: String((documentFile as any)?.type ?? "application/octet-stream"),
-        base64: await fileToBase64(documentFile),
-      },
-    };
-
-    if (isFileLike(parentDocumentFile)) {
-      payload.parentDocument = {
-        name: String((parentDocumentFile as any)?.name ?? "parentDocument"),
-        type: String((parentDocumentFile as any)?.type ?? "application/octet-stream"),
-        base64: await fileToBase64(parentDocumentFile),
-      };
-    }
-
-    const r = await fetch(GAS_WEBAPP_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      student_name: studentName,
+      is_under14: isUnder14,
+      receipt_path: receiptPath,
+      document_path: documentPath,
+      parent_document_path: parentPath,
+      sent: false,
     });
 
-    // GAS часто возвращает HTTP 200 даже при ошибке — поэтому парсим ответ и статус ставим по j.ok
-    const text = await r.text();
-    let j: any = null;
-    try {
-      j = JSON.parse(text);
-    } catch {
-      console.error("GAS NON-JSON:", text?.slice?.(0, 800));
-      return bad("GAS вернул не-JSON ответ", 502);
-    }
+    if (dbErr) throw new Error(`DB insert failed: ${dbErr.message}`);
 
-    const ok = !!j?.ok;
-    return NextResponse.json(j, { status: ok ? 200 : 400 });
+    return NextResponse.json({ ok: true, message: "Файлы загружены ✅" });
   } catch (e: any) {
-    console.error("UPLOAD ERROR", e?.stack || e);
+    console.error("UPLOAD ERROR (SUPABASE)", e?.stack || e);
     return bad("Ошибка сервера: " + String(e?.message || e), 500);
   }
 }

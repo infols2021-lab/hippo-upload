@@ -25,7 +25,7 @@ function formatSize(bytes: number) {
 
 function UploadIcon() {
   return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
       <path
         d="M21 15V19C21 19.5304 20.7893 20.0391 20.4142 20.4142C20.0391 20.7893 19.5304 21 19 21H5C4.46957 21 3.96086 20.7893 3.58579 20.4142C3.21071 20.0391 3 19.5304 3 19V15"
         stroke="currentColor"
@@ -41,7 +41,7 @@ function UploadIcon() {
 
 function FileIcon() {
   return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
       <path
         d="M13 2H6C5.46957 2 4.96086 2.21071 4.58579 2.58579C4.21071 2.96086 4 3.46957 4 4V20C4 20.5304 4.21071 21.0391 4.58579 21.4142C4.96086 21.7893 5.46957 22 6 22H18C18.5304 22 19.0391 21.7893 19.4142 21.4142C19.7893 21.0391 20 20.5304 20 20V9L13 2Z"
         stroke="currentColor"
@@ -56,7 +56,7 @@ function FileIcon() {
 
 function CheckIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
       <path d="M20 6L9 17L4 12" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
@@ -212,9 +212,7 @@ function FileUploadButton({
               <div style={{ fontSize: "14px", fontWeight: "600", color: "#2b3f63", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                 {file.name}
               </div>
-              <div style={{ fontSize: "12px", color: "rgba(43, 63, 99, 0.65)", marginTop: "2px" }}>
-                {formatSize(file.size)}
-              </div>
+              <div style={{ fontSize: "12px", color: "rgba(43, 63, 99, 0.65)", marginTop: "2px" }}>{formatSize(file.size)}</div>
             </div>
             <div
               style={{
@@ -355,7 +353,16 @@ function UploadInner() {
             backdropFilter: "blur(10px)",
           }}
         >
-          <h1 style={{ textAlign: "center", margin: "6px 0 8px 0", fontSize: "34px", fontWeight: "800", color: "#2b3f63", letterSpacing: "-0.3px" }}>
+          <h1
+            style={{
+              textAlign: "center",
+              margin: "6px 0 8px 0",
+              fontSize: "34px",
+              fontWeight: "800",
+              color: "#2b3f63",
+              letterSpacing: "-0.3px",
+            }}
+          >
             Отправка документов
           </h1>
 
@@ -486,9 +493,16 @@ function UploadInner() {
                 background:
                   "linear-gradient(180deg, rgba(155, 205, 255, 0.95) 0%, rgba(65, 135, 230, 0.98) 55%, rgba(35, 110, 220, 0.98) 100%)",
                 boxShadow: "0 18px 36px rgba(35, 110, 220, 0.35), 0 0 0 6px rgba(150, 200, 255, 0.35), inset 0 2px 0 rgba(255,255,255,0.55)",
+                transition: "transform 0.1s ease, opacity 0.15s ease",
               }}
               type="submit"
               disabled={isSending}
+              onMouseEnter={(e) => {
+                if (!isSending) e.currentTarget.style.transform = "translateY(-2px)";
+              }}
+              onMouseLeave={(e) => {
+                if (!isSending) e.currentTarget.style.transform = "translateY(0)";
+              }}
             >
               <span
                 style={{
